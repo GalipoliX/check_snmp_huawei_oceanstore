@@ -1,0 +1,113 @@
+#!/usr/bin/perl -w
+
+use Net::SNMP qw(snmp_dispatcher oid_lex_sort);
+use Getopt::Long;
+use strict;
+
+my $snmp_session;
+my $HELP=0;
+my $COMMUNITY='public';
+
+sub snmp_table {
+	my ($session,$oid)=@_;
+	my $oidq=quotemeta($oid);
+	my $result = $session->get_table(-baseoid => $oid);
+	my $first_entry=1;
+	my $entry_number;
+	my $row_number=-1;
+	my @data=();
+	my $row_regexp;
+	my $outdata ="";
+	for my $entry (oid_lex_sort(keys %{$result})) {
+		if ( ! $first_entry ) {
+			if ( $entry !~ /^$row_regexp/ ) {
+				$first_entry=1;
+			}
+		}
+		if ( $first_entry ) {
+			if ( $entry =~ /^$oidq\.([^\.]+)\.(.*?)$/ ) {
+				$row_regexp=$oidq . '\.' . quotemeta($1);
+				$first_entry=0;
+				$row_number++;
+				$entry_number=-1;
+			} else {
+				print STDERR "E: Unable to match first table entry.\n";
+				exit 1;
+			}
+		}
+		$entry_number++;
+		if ( $row_number == 0 ) {
+			push(@data,[]);
+		}
+		#print "$result->{$entry} \n";
+		#print $result->{$entry} ;
+		$outdata=$result->{$entry};
+		$outdata =~ s/\R//g;
+		$outdata =~ s/,/ /g;
+		#print $outdata;
+		#$data[$entry_number]->[$row_number]=$result->{$entry};
+		$data[$entry_number]->[$row_number]=$outdata;
+	}
+	
+	return \@data;
+}
+
+sub help {
+	print "snmptable2csv by Frank Burkhardt <burk\@cbs.mpg.de>
+Usage: snmptable [host] [snmp-oid]
+
+Converts an snmp table to CSV output.
+
+Commands:
+
+ -h, --help          This help screen
+
+Options:
+
+ -c, --community=C   Use SNMPv2-Community C. Defaults to 'public'.
+
+Example:
+
+ snmptable2csv switch1.domain 1.3.6.1.4.1.1991.1.1.3.2.1
+ Reads Foundry(tm) specific VLAN table from a switch, prints it as
+ CSV (Comma Separated Value) file.
+
+";
+}
+
+sub main {
+	my $community = "public";
+	Getopt::Long::Configure("bundling");
+	GetOptions(
+		'help|h' => \$HELP,
+		'community|c=s' => \$community,
+	) || exit 1;
+	if ( $HELP ) {
+		help();
+		exit 0;
+	}
+	if ( @ARGV < 2 ) {
+		print STDERR "E: Insufficient cmdline parameters. You need --help.\n";
+		exit 1;
+	}
+
+	
+	my ($session,$error)=Net::SNMP->session(
+		-hostname => $ARGV[0],
+		-community => $community,
+		-version => 'snmpv2c',
+	);
+	if ( ! defined($session) ) {
+		print "E: $error\n";
+		exit 1;
+	}
+	$snmp_session=$session;
+	my $table=snmp_table($snmp_session,$ARGV[1]);
+	foreach my $row (@{$table}) {
+		print '"' . join('","',@{$row}) . "\"\n";
+		#print @{$row} . "\n";
+	}
+}
+
+main();
+
